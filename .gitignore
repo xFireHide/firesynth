@@ -1,0 +1,11 @@
+# Build (JUCE is fetched via FetchContent; artifacts are generated)
+build/
+*.o
+*.obj
+
+# macOS
+.DS_Store
+
+# Third-party / reference material (not part of this project's source)
+midi editor/
+*.pdf
