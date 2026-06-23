@@ -23,6 +23,7 @@ namespace ParamID
 
 PianoSynthAudioProcessor::PianoSynthAudioProcessor()
     : juce::AudioProcessor (BusesProperties()
+          .withInput  ("Voice",  juce::AudioChannelSet::stereo(), true)  // microfone (Standalone)
           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMETERS", createParameterLayout())
 {
@@ -32,6 +33,16 @@ PianoSynthAudioProcessor::PianoSynthAudioProcessor()
     resoParam   = apvts.getRawParameterValue (ParamID::resonance);
     driveParam  = apvts.getRawParameterValue (ParamID::drive);
     reverbParam = apvts.getRawParameterValue (ParamID::reverb);
+
+    voiceMonitorParam = apvts.getRawParameterValue ("voiceMonitor");
+    voiceLevelParam   = apvts.getRawParameterValue ("voiceLevel");
+
+    // Liga cada efeito de voz ao seu parametro de intensidade (0..1) no APVTS.
+    for (int i = 0; i < VoiceFX::kNumFx; ++i)
+    {
+        fxAmountParam[(size_t) i] = apvts.getRawParameterValue (VoiceFX::paramId (i));
+        voiceFx.setAmountParam (i, fxAmountParam[(size_t) i]);
+    }
 
     // Coleta dos ponteiros atomicos que cada voz vai ler em tempo real.
     SynthVoice::ParameterPointers vp;
@@ -115,6 +126,21 @@ PianoSynthAudioProcessor::createParameterLayout()
         ParameterID { ParamID::gain, 1 }, "Master Gain",
         NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.85f));
 
+    // Retorno (monitor) da voz: ouvir o microfone pela saida. Off por padrao para
+    // nao gerar microfonia em quem abre o app sem fone.
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "voiceMonitor", 1 }, "Voice Monitor", false));
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "voiceLevel", 1 }, "Voice Level",
+        NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.7f));
+
+    // Intensidade (0..1) de cada efeito de voz — knob-mapeavel via os seletores KNOBS.
+    for (int i = 0; i < VoiceFX::kNumFx; ++i)
+        layout.add (std::make_unique<AudioParameterFloat> (
+            ParameterID { VoiceFX::paramId (i), 1 },
+            "FX " + juce::String (VoiceFX::displayName (i)),
+            NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.5f));
+
     return layout;
 }
 
@@ -143,18 +169,51 @@ void PianoSynthAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     synth.setCurrentPlaybackSampleRate (sampleRate);
     padEngine.prepare (sampleRate, samplesPerBlock, juce::jmax (1, getTotalNumOutputChannels()));
     reverb.setSampleRate (sampleRate);
+
+    const int chans = juce::jmax (1, juce::jmax (getTotalNumInputChannels(),
+                                                 getTotalNumOutputChannels()));
+    voiceFx.prepare (sampleRate, samplesPerBlock, chans);
+    voiceBuffer.setSize (chans, samplesPerBlock);
 }
 
 bool PianoSynthAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     const auto& out = layouts.getMainOutputChannelSet();
-    return out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo();
+    if (out != juce::AudioChannelSet::mono() && out != juce::AudioChannelSet::stereo())
+        return false;
+
+    // Entrada de voz (microfone) opcional: aceita desabilitada, mono ou estereo.
+    const auto& in = layouts.getMainInputChannelSet();
+    return in == juce::AudioChannelSet::disabled()
+        || in == juce::AudioChannelSet::mono()
+        || in == juce::AudioChannelSet::stereo();
 }
 
 void PianoSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                              juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
+
+    const int numSamples = buffer.getNumSamples();
+
+    // --- Captura a voz (entrada de microfone) ANTES de limpar o buffer ---
+    // A voz vai para a saida quando ha um efeito segurado (fxOn) OU quando o retorno
+    // (monitor) esta ligado. Off por padrao para nao gerar microfonia sem fone.
+    const bool monitorOn = voiceMonitorParam != nullptr && voiceMonitorParam->load() > 0.5f;
+    const bool fxOn      = voiceFx.anyActive();
+    const bool voiceActive = (monitorOn || fxOn) && numSamples <= voiceBuffer.getNumSamples();
+    if (voiceActive)
+    {
+        voiceBuffer.clear (0, numSamples);
+        const int inCh   = getTotalNumInputChannels();
+        const int copyCh = juce::jmin (inCh, voiceBuffer.getNumChannels());
+        for (int ch = 0; ch < copyCh; ++ch)
+            voiceBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+        // Microfone mono: replica o canal 0 nos demais para a voz ficar centralizada.
+        if (inCh == 1)
+            for (int ch = 1; ch < voiceBuffer.getNumChannels(); ++ch)
+                voiceBuffer.copyFrom (ch, 0, buffer, 0, 0, numSamples);
+    }
 
     // O motor escreve em buffer limpo; sintetizador acumula as vozes ativas.
     buffer.clear();
@@ -262,6 +321,22 @@ void PianoSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             reverb.processStereo (buffer.getWritePointer (0), buffer.getWritePointer (1), buffer.getNumSamples());
         else if (buffer.getNumChannels() == 1)
             reverb.processMono (buffer.getWritePointer (0), buffer.getNumSamples());
+    }
+
+    // --- Voz ao vivo: cadeia de FX propria (independente do Drive/Reverb master) ---
+    // Com efeito segurado, aplica a cadeia; senao (so monitor) sai seca. Volume = Voice
+    // Level. Passa pelo ganho master + limiter abaixo.
+    if (voiceActive)
+    {
+        if (fxOn)
+            voiceFx.process (voiceBuffer, numSamples);
+
+        const float voiceLevel = voiceLevelParam != nullptr ? voiceLevelParam->load() : 0.7f;
+        voiceBuffer.applyGain (0, numSamples, voiceLevel);
+
+        const int mixCh = juce::jmin (voiceBuffer.getNumChannels(), buffer.getNumChannels());
+        for (int ch = 0; ch < mixCh; ++ch)
+            buffer.addFrom (ch, 0, voiceBuffer, ch, 0, numSamples);
     }
 
     // Mixer master: ganho global + guarda contra clipping (hard clip de seguranca).

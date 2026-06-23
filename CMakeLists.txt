@@ -25,6 +25,10 @@ juce_add_plugin(FireSynth
     NEEDS_MIDI_OUTPUT         FALSE
     IS_MIDI_EFFECT            FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    # Live voice FX: the Standalone opens the microphone as an audio input. On macOS
+    # this requires the usage description + audio-input entitlement (JUCE injects both).
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "FireSynth usa o microfone para aplicar efeitos na voz ao vivo."
     PLUGIN_MANUFACTURER_CODE  Fhde
     PLUGIN_CODE               Frsy
     FORMATS                   AU VST3 Standalone   # Standalone runs without a DAW
@@ -36,7 +40,8 @@ target_sources(FireSynth PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/dsp/SynthVoice.cpp
-    Source/dsp/PadEngine.cpp)
+    Source/dsp/PadEngine.cpp
+    Source/dsp/VoiceFX.cpp)
 
 target_compile_definitions(FireSynth PUBLIC
     JUCE_WEB_BROWSER=0

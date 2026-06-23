@@ -7,6 +7,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "dsp/PadEngine.h"
+#include "dsp/VoiceFX.h"
 
 /**
     Coracao do plugin/standalone.
@@ -70,6 +71,10 @@ public:
 
     // Reproducao de amostras dos 8 pads (drag&drop na GUI; gatilho por clique ou MIDI).
     PadEngine padEngine;
+
+    // Efeitos aplicados a voz ao vivo (microfone). A GUI liga/desliga cada efeito
+    // segurando um pad de FX; a intensidade vem de parametros do APVTS (knob-mapeavel).
+    VoiceFX voiceFx;
     // Pads do AMW Mini 32: canal 10, notas 30..37 (8 pads).
     static constexpr int kPadMidiChannel = 10;
     static constexpr int kPadBaseNote    = 30;
@@ -108,6 +113,14 @@ private:
     float padPitchBendSemis = 0.0f;            // pitch bend atual aplicado aos pads (audio thread)
 
     juce::Reverb reverb; // efeito master global
+
+    std::atomic<float>* voiceMonitorParam = nullptr; // retorno da voz on/off (0/1)
+    std::atomic<float>* voiceLevelParam   = nullptr; // volume do retorno da voz (0..1)
+
+    // Buffer reutilizado p/ a voz capturada do microfone (sem alocacao no audio thread).
+    juce::AudioBuffer<float> voiceBuffer;
+    // Ponteiros atomicos (APVTS) de intensidade de cada efeito de voz.
+    std::array<std::atomic<float>*, VoiceFX::kNumFx> fxAmountParam {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PianoSynthAudioProcessor)
 };

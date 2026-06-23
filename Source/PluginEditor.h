@@ -7,6 +7,7 @@
 #include "PluginProcessor.h"
 #include "ui/SynthLookAndFeel.h"
 #include "ui/PadComponent.h"
+#include "ui/FxPadComponent.h"
 #include "ui/WheelComponent.h"
 
 /**
@@ -18,6 +19,7 @@
     on-screen Pitch/Mod wheels mirror that incoming Pitch Bend / Mod (CC1) value.
 */
 class PianoSynthAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                       public  juce::DragAndDropContainer,
                                        private juce::Timer
 {
 public:
@@ -61,6 +63,20 @@ private:
     // 8 sample pads (drag & drop audio + click to play).
     std::array<PadComponent, PadEngine::kNumPads> pads;
     juce::Label padsTitle;
+
+    // Voice FX: a palette of draggable effect chips + a dedicated row of FX pads.
+    // Drag a chip onto a pad to assign; hold the pad to apply the effect to the mic.
+    static constexpr int kNumFxPads = 8;
+    std::array<FxChip, VoiceFX::kNumFx>     fxChips;
+    std::array<FxPadComponent, kNumFxPads>  fxPads;
+    juce::Label fxTitle, fxHint;
+
+    // Retorno (monitor) da voz: liga ouvir o microfone + knob de volume "Voz".
+    juce::ToggleButton voiceMonitorButton;
+    juce::Slider       voiceLevelSlider;
+    juce::Label        voiceLevelLabel;
+    std::unique_ptr<APVTS::ButtonAttachment> voiceMonitorAtt;
+    std::unique_ptr<APVTS::SliderAttachment> voiceLevelAtt;
 
     // MIDI activity indicator (LED + last note name).
     juce::Label midiActivityLabel;

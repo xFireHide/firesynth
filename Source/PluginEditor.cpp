@@ -2,7 +2,7 @@
 
 // Parameters a hardware knob can be assigned to (Master is excluded — that is the
 // volume fader / CC7). Pairs of { display name, APVTS parameter id }. "Off" = unmapped.
-static const std::array<std::pair<juce::String, juce::String>, 11> knobTargets = {{
+static const std::array<std::pair<juce::String, juce::String>, 19> knobTargets = {{
     { "Off",       "" },
     { "Cutoff",    "cutoff" },
     { "Resonance", "resonance" },
@@ -14,6 +14,15 @@ static const std::array<std::pair<juce::String, juce::String>, 11> knobTargets =
     { "Decay",     "decay" },
     { "Sustain",   "sustain" },
     { "Release",   "release" },
+    // Intensidade dos efeitos de voz (segure o pad de FX, gire o knob p/ dosar).
+    { "FX Drive",  "fxDriveAmt" },
+    { "FX Reverb", "fxReverbAmt" },
+    { "FX Delay",  "fxDelayAmt" },
+    { "FX Chorus", "fxChorusAmt" },
+    { "FX Crush",  "fxCrushAmt" },
+    { "FX Phone",  "fxPhoneAmt" },
+    { "FX Robot",  "fxRobotAmt" },
+    { "Voice Lvl", "voiceLevel" },
 }};
 
 PianoSynthAudioProcessorEditor::PianoSynthAudioProcessorEditor (PianoSynthAudioProcessor& p)
@@ -113,6 +122,42 @@ PianoSynthAudioProcessorEditor::PianoSynthAudioProcessorEditor (PianoSynthAudioP
         addAndMakeVisible (pad);
     }
 
+    // Voice FX: drag an effect chip onto an FX pad, then HOLD the pad to apply the
+    // effect to the live microphone. The matching "FX ..." knob target dials intensity.
+    fxTitle.setText ("VOICE FX  (arraste um efeito -> segure o pad)", juce::dontSendNotification);
+    fxTitle.setJustificationType (juce::Justification::centredLeft);
+    fxTitle.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (fxTitle);
+
+    fxHint.setText ("mic ao vivo - segure = liga - knob 'FX ...' = intensidade", juce::dontSendNotification);
+    fxHint.setJustificationType (juce::Justification::centredLeft);
+    fxHint.setColour (juce::Label::textColourId, juce::Colours::grey);
+    fxHint.setFont (11.0f);
+    addAndMakeVisible (fxHint);
+
+    for (int i = 0; i < VoiceFX::kNumFx; ++i)
+    {
+        auto& chip = fxChips[(size_t) i];
+        chip.fxIndex = i;
+        chip.label   = VoiceFX::displayName (i);
+        addAndMakeVisible (chip);
+    }
+
+    for (int i = 0; i < kNumFxPads; ++i)
+    {
+        auto& fp = fxPads[(size_t) i];
+        fp.setIndex (i + 1);
+        fp.nameOf  = [] (int fx) { return juce::String (VoiceFX::displayName (fx)); };
+        fp.onHold  = [this] (int fx, bool on) { processorRef.voiceFx.setActive (fx, on); };
+        addAndMakeVisible (fp);
+    }
+
+    // Retorno (monitor) da voz: ouvir o microfone pela saida + knob de volume "Voz".
+    voiceMonitorButton.setButtonText ("Retorno da voz");
+    voiceMonitorButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (voiceMonitorButton);
+    configureRotary (voiceLevelSlider, voiceLevelLabel, "Voz");
+
     // Attachments: GUI <-> APVTS (atomic writes; never touch the audio thread).
     auto& apvts = processorRef.apvts;
     attackAtt    = std::make_unique<APVTS::SliderAttachment>   (apvts, "attack",    attackSlider);
@@ -127,8 +172,10 @@ PianoSynthAudioProcessorEditor::PianoSynthAudioProcessorEditor (PianoSynthAudioP
     reverbAtt    = std::make_unique<APVTS::SliderAttachment>   (apvts, "reverb",    reverbSlider);
     gainAtt      = std::make_unique<APVTS::SliderAttachment>   (apvts, "gain",      gainSlider);
     waveformAtt  = std::make_unique<APVTS::ComboBoxAttachment> (apvts, "waveform",  waveformBox);
+    voiceLevelAtt   = std::make_unique<APVTS::SliderAttachment> (apvts, "voiceLevel",   voiceLevelSlider);
+    voiceMonitorAtt = std::make_unique<APVTS::ButtonAttachment> (apvts, "voiceMonitor", voiceMonitorButton);
 
-    setSize (780, 600);
+    setSize (780, 730);
     startTimerHz (30); // MIDI LED + wheels mirror hardware
 }
 
@@ -311,6 +358,26 @@ void PianoSynthAudioProcessorEditor::resized()
     }
     area.removeFromBottom (8);
 
+    // Voice FX block: title + chip palette (7 effects) + FX pad row (8 pads).
+    {
+        auto fxBlock = area.removeFromBottom (118);
+        auto fxTitleRow = fxBlock.removeFromTop (18);
+        voiceMonitorButton.setBounds (fxTitleRow.removeFromRight (150));
+        fxTitle.setBounds (fxTitleRow);
+        auto chipRow = fxBlock.removeFromTop (24);
+        const int nc = VoiceFX::kNumFx;
+        const int cw = chipRow.getWidth() / nc;
+        for (int i = 0; i < nc; ++i)
+            fxChips[(size_t) i].setBounds (chipRow.removeFromLeft (cw).reduced (2, 1));
+        fxHint.setBounds (fxBlock.removeFromTop (14));
+        fxBlock.removeFromTop (2);
+        auto fxPadRow = fxBlock;
+        const int pw = fxPadRow.getWidth() / kNumFxPads;
+        for (int i = 0; i < kNumFxPads; ++i)
+            fxPads[(size_t) i].setBounds (fxPadRow.removeFromLeft (pw).reduced (3));
+    }
+    area.removeFromBottom (8);
+
     // Pads: title + 2x4 grid.
     auto padsBlock = area.removeFromBottom (170);
     padsTitle.setBounds (padsBlock.removeFromTop (18));
@@ -332,8 +399,8 @@ void PianoSynthAudioProcessorEditor::resized()
     // Synth knobs: 2 rows x 5 columns (uses the remaining top space).
     juce::Slider* row1[] = { &attackSlider, &decaySlider, &sustainSlider, &releaseSlider, &cutoffSlider, &resonanceSlider };
     juce::Label*  lab1[] = { &attackLabel,  &decayLabel,  &sustainLabel,  &releaseLabel,  &cutoffLabel,  &resonanceLabel  };
-    juce::Slider* row2[] = { &detuneSlider, &oscMixSlider, &driveSlider, &reverbSlider, &gainSlider, nullptr };
-    juce::Label*  lab2[] = { &detuneLabel,  &oscMixLabel,  &driveLabel,  &reverbLabel,  &gainLabel,  nullptr };
+    juce::Slider* row2[] = { &detuneSlider, &oscMixSlider, &driveSlider, &reverbSlider, &gainSlider, &voiceLevelSlider };
+    juce::Label*  lab2[] = { &detuneLabel,  &oscMixLabel,  &driveLabel,  &reverbLabel,  &gainLabel,  &voiceLevelLabel  };
 
     const int cols = 6;
     const int rowH = area.getHeight() / 2;
