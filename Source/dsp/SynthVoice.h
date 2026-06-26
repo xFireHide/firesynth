@@ -70,4 +70,5 @@ private:
     static constexpr float kPitchBendRange  = 2.0f;  // semitons no fim de curso do wheel
     static constexpr float kVibratoRange    = 0.5f;  // semitons no mod wheel maximo
     static constexpr float kVibratoRateHz   = 5.5f;  // velocidade do vibrato
+    static constexpr float kMasterTuneSemitones = 0.0f; // afinacao global em semitons (0 = A440)
 };

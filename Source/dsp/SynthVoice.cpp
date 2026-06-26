@@ -45,7 +45,9 @@ void SynthVoice::setPitchBendFromWheel (int wheelValue) noexcept
 void SynthVoice::startNote (int midiNoteNumber, float velocity,
                             juce::SynthesiserSound* /*sound*/, int currentPitchWheelPosition)
 {
-    baseFrequencyHz = juce::MidiMessage::getMidiNoteInHertz (midiNoteNumber);
+    // Afinacao concert pitch A440 (semitom abaixo deixava o mi soando como D#).
+    baseFrequencyHz = juce::MidiMessage::getMidiNoteInHertz (midiNoteNumber)
+                    * std::pow (2.0, kMasterTuneSemitones / 12.0);
     setPitchBendFromWheel (currentPitchWheelPosition);
     lfoPhase = 0.0;
 

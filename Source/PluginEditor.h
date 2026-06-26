@@ -60,15 +60,14 @@ private:
     std::array<juce::ComboBox, PianoSynthAudioProcessor::kNumMacros> knobAssignBox;
     juce::Label knobAssignTitle;
 
-    // 8 sample pads (drag & drop audio + click to play).
+    // 16 sample pads (drag & drop audio + click to play). Each pad doubles as a
+    // voice-FX pad: drop an effect chip on it and click toggles the effect on the mic.
     std::array<PadComponent, PadEngine::kNumPads> pads;
     juce::Label padsTitle;
 
-    // Voice FX: a palette of draggable effect chips + a dedicated row of FX pads.
-    // Drag a chip onto a pad to assign; hold the pad to apply the effect to the mic.
-    static constexpr int kNumFxPads = 8;
-    std::array<FxChip, VoiceFX::kNumFx>     fxChips;
-    std::array<FxPadComponent, kNumFxPads>  fxPads;
+    // Voice FX: a palette of draggable effect chips. Drag a chip onto one of the
+    // pads above to assign it; clicking that pad applies the effect to the mic.
+    std::array<FxChip, VoiceFX::kNumFx> fxChips;
     juce::Label fxTitle, fxHint;
 
     // Retorno (monitor) da voz: liga ouvir o microfone + knob de volume "Voz".
